@@ -144,15 +144,47 @@ body{padding-left:206px}
 
 <!-- ========== 供应商 ========== -->
 <section id="tab-providers" style="display:none">
-  <div class="page-head"><div class="row">
-    <div><h1>供应商</h1><div class="sub" id="provCount">共 0 个</div></div>
-    <button class="btn primary" onclick="openWizard('')">＋ 添加账号</button>
-  </div></div>
-  <div id="provList"></div>
-  <div class="card" id="wizardCard" style="display:none">
-    <div class="card-title"><b>添加账号 · <span id="wizProv"></span></b><button class="btn mini" onclick="closeWizard()">关闭</button></div>
-    <div id="wizardBody"></div>
-    <div id="wizStatus" class="status-line"></div>
+  <div id="provListView">
+    <div class="page-head"><div class="row">
+      <div><h1>供应商</h1><div class="sub" id="provCount">共 0 个</div></div>
+    </div></div>
+    <div id="provList"></div>
+  </div>
+  <div id="provDetailView" style="display:none">
+    <div class="page-head"><div class="row">
+      <div style="display:flex;align-items:center;gap:12px">
+        <button class="btn" style="flex:0 0 auto;padding:8px 13px" onclick="backDetail()">←</button>
+        <div><h1 id="dTitle" style="font-size:22px">供应商</h1><div class="sub" id="dSub"></div></div>
+      </div>
+    </div></div>
+    <div class="card" id="dRegionCard" style="display:none">
+      <div style="display:flex;align-items:center;gap:10px"><span style="font-size:17px">🌐</span><b>服务区域</b>
+        <span style="flex:1"></span><span id="dRegionPills" style="display:flex;gap:0"></span></div>
+    </div>
+    <div class="card" id="dLoginCard">
+      <div class="muted" id="dLoginHint">登录</div>
+      <div id="dLoginBtns" style="margin-top:10px"></div>
+      <div style="margin-top:14px"><label>粘贴凭证 JSON 导入（也接受登录后的回调链接）</label>
+        <textarea id="dPastePayload" rows="2"></textarea>
+        <p style="margin-top:8px"><button class="btn" onclick="dImport()">导入</button></p></div>
+      <div id="dLoginStatus" class="status-line"></div>
+    </div>
+    <div class="card">
+      <div class="card-title"><b id="dAccCount">账号 · 0 个</b></div>
+      <div id="dAccList"></div>
+      <button class="btn" style="width:100%;margin-top:10px" onclick="refreshAllInDetail()">刷新额度</button>
+    </div>
+    <div class="card">
+      <div class="muted" style="margin-bottom:6px">供应商设置</div>
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div><b>启用该供应商</b><div class="muted">停用后不参与模型目录与路由（账号与登录状态保留）</div></div>
+        <span id="dSwEnabled" class="switch" onclick="dToggleEnabled()"></span>
+      </div>
+      <label style="margin-top:14px">默认模型（模型名不带 provider/ 前缀时用它；留空 = auto）</label>
+      <div class="row"><input id="dDefaultModel" placeholder="如 deepseek-v4.1-flash">
+      <button class="btn" style="flex:0 0 auto" onclick="dSaveDefault()">保存</button></div>
+      <div id="dSetStatus" class="status-line"></div>
+    </div>
   </div>
 </section>
 
@@ -218,6 +250,7 @@ body{padding-left:206px}
     <div class="gtitle">03 / 关于引擎 · ABOUT THE ENGINE</div>
     <div class="set-row" style="cursor:default"><div class="l"><b>ai-gateway · PC 移植版</b><div class="desc">把 Trae / Loomy / 小浣熊 / WorkBuddy / Antigravity / ChatGPT 的自有账号聚合成一个 OpenAI 兼容端点</div></div><div class="r">Web 管理台 v2</div></div>
     <div class="set-row" style="cursor:default"><div class="l"><b>数据目录</b><div class="desc">账号与设置存放于 ~/.aigw（命令行 --data 可改）</div></div><div class="r">~/.aigw</div></div>
+    <div class="set-row" onclick="exitApp(event)"><div class="l"><b>退出网关程序 · EXIT</b><div class="desc">更新版本用：退出 → 重新构建 → 桌面图标重新拉起（自启动仅在开机登录时生效）</div></div><div class="r">⏻</div></div>
   </div>
 </section>
 
@@ -255,7 +288,7 @@ function switchTab(t){
   document.querySelectorAll('#sidebar button').forEach(b=>b.classList.toggle('active', b.dataset.tab===t));
   document.querySelectorAll('main section').forEach(x=>x.style.display='none');
   $('#tab-'+t).style.display='block';
-  ({home:loadHome, providers:loadProviders, models:loadModels, records:()=>loadRecords(curFilter), mine:loadMine}[t]||(()=>{}))();
+  ({home:loadHome, providers:()=>{ curDetail? loadDetail() : loadProviders(); }, models:loadModels, records:()=>loadRecords(curFilter), mine:loadMine}[t]||(()=>{}))();
 }
 function togglePanel(id){ $('#'+id).classList.toggle('open'); }
 function fmtTime(ms){ return ms? new Date(ms).toLocaleString('zh-CN',{hour12:false}) : '-'; }
@@ -336,89 +369,158 @@ async function refreshAllCredits(){
   loadHome();
 }
 
-/* ---------- 供应商 ---------- */
+/* ---------- 供应商（二级：列表 → 详情） ---------- */
+const REGIONS = {
+  codebuddy: [{v:'cn',l:'国内'},{v:'global',l:'国外'}],
+  trae:      [{v:'trae.cn',l:'国内'},{v:'trae.ai',l:'国际'}],
+};
+let curDetail = null, curRegion = null, wizTimer = null, wizMode = null, wizState = null;
+
 async function loadProviders(){
   const d = await api('/api/providers');
   $('#provCount').textContent = '共 '+d.providers.length+' 个';
   $('#provList').innerHTML = d.providers.map(p=>{
     const m = PROV_META[p.id] || {icon:'🔧', color:'#6c8cff', desc: AUTH_LABEL[p.authKind]||''};
-    return `<div class="prov" onclick="openWizard('${p.id}')">
+    return `<div class="prov" onclick="openDetail('${p.id}')">
       <div class="icon" style="background:${m.color}22">${m.icon}</div>
       <div class="info"><b>${esc(p.displayName)}</b><div class="desc">${esc(m.desc)}</div>
-        <span class="badge">账号 ${p.accountCount}</span>${p.usableCount>0?`<span class="badge purple">可用 ${p.usableCount}</span>`:''}
-        <span class="badge">${AUTH_LABEL[p.authKind]||p.authKind}</span></div>
+        <span class="badge">账号 ${p.accountCount}</span>${p.usableCount>0?`<span class="badge purple">可用 ${p.usableCount}</span>`:''}</div>
       <span class="arrow">›</span></div>`;
   }).join('');
 }
-async function openWizard(pid){
-  if(!pid){ pid = prompt('输入供应商 id（trae/loomy/antigravity/chatgpt/codebuddy/raccoon）：','codebuddy'); if(!pid) return; }
-  const d = await api('/api/providers');
-  const p = d.providers.find(x=>x.id===pid); if(!p) return alert('未知供应商: '+pid);
-  $('#wizardCard').style.display='block'; $('#wizProv').textContent = p.displayName; $('#wizStatus').className='status-line';
-  renderWizard(pid, p.authKind);
-  $('#wizardCard').scrollIntoView({behavior:'smooth'});
+function backDetail(){ curDetail=null; $('#provDetailView').style.display='none'; $('#provListView').style.display='block'; loadProviders(); }
+async function openDetail(pid){
+  curDetail = pid; curRegion = null; clearInterval(wizTimer);
+  $('#provListView').style.display='none'; $('#provDetailView').style.display='block';
+  $('#dLoginStatus').className='status-line'; $('#dSetStatus').className='status-line';
+  await loadDetail();
 }
-function closeWizard(){ clearInterval(wizTimer); $('#wizardCard').style.display='none'; }
-function renderWizard(pid, authKind){
-  const body = $('#wizardBody');
+async function loadDetail(){
+  if(!curDetail) return;
+  const d = await api('/api/provider/'+curDetail);
+  wizState = d;
+  const m = PROV_META[curDetail] || {icon:'🔧'};
+  $('#dTitle').textContent = d.info.displayName;
+  $('#dSub').textContent = d.accounts.length+' 个账号 · 可用 '+d.accounts.filter(a=>!a.disabled&&a.enabled).length;
+  // 区域
+  const regions = REGIONS[curDetail]||[];
+  if(regions.length){
+    $('#dRegionCard').style.display='block';
+    curRegion = curRegion || d.settings.region || regions[0].v;
+    $('#dRegionPills').innerHTML = regions.map(r=>{
+      const act = r.v===curRegion;
+      return `<span class="pill ${act?'active':''}" style="border-radius:16px" onclick="selectRegion('${r.v}')">${r.l}</span>`;
+    }).join('');
+  } else { $('#dRegionCard').style.display='none'; curRegion=''; }
+  renderLoginArea();
+  // 账号
+  $('#dAccCount').textContent = '账号 · '+d.accounts.length+' 个';
+  $('#dAccList').innerHTML = d.accounts.map(a=>{
+    const credit = a.creditsKnown? `<b style="color:var(--gold)">${a.credits.toLocaleString()}</b>` : (a.detail? `<span class="muted">${esc(a.detail)}</span>`:'<span class="muted">未知</span>');
+    const st = a.disabled? '<span class="badge bad">凭证失效</span>' : (a.enabled? '' : '<span class="badge warn">已停用</span>');
+    return `<div style="border-bottom:1px solid var(--border);padding:10px 0">
+      <div style="display:flex;align-items:center;gap:8px;cursor:pointer" onclick="toggleAccExpand('${a.uid}')">
+        <code class="muted" style="font-size:12px">${esc(a.uid.slice(0,14))}…</code>
+        <span style="flex:1"></span>${credit}${st}<span class="muted">▾</span></div>
+      <div id="exp-${a.uid}" style="display:none;padding:8px 0 2px">
+        ${a.reason?`<div class="muted" style="margin-bottom:6px">${esc(a.reason)}</div>`:''}
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn mini" onclick="refreshCredit('${curDetail}','${a.uid}')">刷额度</button>
+          <button class="btn mini" onclick="checkinOne('${curDetail}','${a.uid}')">签到</button>
+          <button class="btn mini" onclick="toggleAcc('${curDetail}','${a.uid}',${!a.enabled})">${a.enabled?'停用':'启用'}</button>
+          <button class="btn mini danger" onclick="removeAcc('${curDetail}','${a.uid}')">删除</button>
+        </div></div></div>`;
+  }).join('') || '<p class="muted">还没有账号，用上方登录按钮添加</p>';
+  // 设置
+  $('#dSwEnabled').classList.toggle('on', d.settings.enabled);
+  $('#dDefaultModel').value = d.settings.defaultModel||'';
+}
+function toggleAccExpand(uid){ const el=$('#exp-'+uid); if(el) el.style.display = el.style.display==='none'?'block':'none'; }
+function selectRegion(v){ curRegion=v; clearInterval(wizTimer); $('#dLoginStatus').className='status-line'; loadDetail(); }
+function renderLoginArea(){
+  const authKind = (wizState?.info?.authKind)||'';
+  const regions = REGIONS[curDetail]||[];
+  const rl = regions.find(r=>r.v===curRegion);
+  $('#dLoginHint').textContent = '登录'+(rl? ' · '+rl.l+'版':'')+(authKind? ' · '+(AUTH_LABEL[authKind]||authKind):'');
+  const btn = $('#dLoginBtns');
   if(authKind==='SMS_CODE'){
-    body.innerHTML = `
+    btn.innerHTML = `
       <div class="row"><div><label>手机号</label><input id="smsPhone" placeholder="13xxxxxxxxx"></div>
-      <div style="flex:0 0 auto;padding-top:18px"><button class="btn primary" onclick="smsSend('${pid}')">发送验证码</button></div></div>
+      <div style="flex:0 0 auto;padding-top:18px"><button class="btn primary" onclick="smsSend('${curDetail}')">发送验证码</button></div></div>
       <div id="smsStep2" style="display:none"><div class="row">
       <div><label>msgid</label><input id="smsMsgid" readonly></div>
       <div><label>验证码</label><input id="smsCode"></div>
-      <div style="flex:0 0 auto;padding-top:18px"><button class="btn primary" onclick="smsDone('${pid}')">完成登录</button></div></div></div>`;
-    return;
+      <div style="flex:0 0 auto;padding-top:18px"><button class="btn primary" onclick="smsDone('${curDetail}')">完成登录</button></div></div></div>`;
+  } else {
+    const label = rl? '打开'+rl.l+'版登录页' : '打开登录页';
+    btn.innerHTML = `<button class="btn primary" style="width:100%;padding:12px" onclick="wizStart('${curDetail}')">${label}</button>`;
   }
-  body.innerHTML = `
-    <p class="muted">登录方式：${AUTH_LABEL[authKind]||authKind}</p>
-    <p style="margin-top:10px"><button class="btn primary" onclick="wizStart('${pid}')">开始登录</button>
-    <span class="muted">（自动打开系统浏览器；部分回调链接也可手动粘贴）</span></p>
-    <div style="margin-top:12px"><label>兜底：把浏览器跳转后地址栏的完整回调链接粘贴到这里</label>
-    <textarea id="pasteUrl" rows="2"></textarea>
-    <p style="margin-top:8px"><button class="btn" onclick="doPaste('${pid}')">提交回调链接</button></p></div>`;
 }
-let wizTimer=null;
 async function wizStart(pid){
   clearInterval(wizTimer);
-  const d = await post('/api/login/start',{providerId:pid});
-  const st = $('#wizStatus'); const show=(cls,t)=>{st.className='status-line show '+cls; st.innerHTML=t;};
+  const st = $('#dLoginStatus');
+  st.className='status-line show s-wait'; st.textContent='正在准备登录…';
+  const d = await post('/api/login/start',{providerId:pid, region:curRegion});
   if(d.mode==='poll'){
-    show('s-wait','请在新打开的登录页完成授权，正在自动轮询（5 分钟内有效）…');
+    st.innerHTML='请在新打开的登录页完成授权，自动轮询中（5 分钟内有效）…<br><a href="'+esc(d.loginUrl)+'" target="_blank">'+esc(d.loginUrl)+'</a>';
+    window.open(d.loginUrl,'_blank');
     wizTimer=setInterval(async()=>{
       const r=await api('/api/login/poll?provider='+pid+'&state='+encodeURIComponent(d.pollState)+'&region='+encodeURIComponent(d.region||''));
-      if(r.status==='success'){clearInterval(wizTimer);show('s-ok','✅ 登录成功：'+esc(r.nickname||r.uid));loadProviders();}
-      else if(r.status==='failed'){clearInterval(wizTimer);show('s-bad','❌ '+esc(r.error));}
+      if(r.status==='success'){clearInterval(wizTimer);st.className='status-line show s-ok';st.textContent='✅ 登录成功：'+(r.nickname||r.uid);loadDetail();}
+      else if(r.status==='failed'){clearInterval(wizTimer);st.className='status-line show s-bad';st.textContent='❌ '+r.error;}
     },3000);
   } else {
-    show('s-wait','等待浏览器回调…（最长 5 分钟）<br><a href="'+esc(d.loginUrl)+'" target="_blank">'+esc(d.loginUrl)+'</a>');
+    st.innerHTML='等待浏览器回调…（最长 5 分钟）<br><a href="'+esc(d.loginUrl)+'" target="_blank">'+esc(d.loginUrl)+'</a>';
     window.open(d.loginUrl,'_blank');
     wizTimer=setInterval(async()=>{
       const r=await api('/api/login/wait?provider='+pid);
-      if(r.status==='success'){clearInterval(wizTimer);show('s-ok','✅ 登录成功，账号已加入账号池');loadProviders();}
-      else if(r.status==='timeout'){clearInterval(wizTimer);show('s-bad','⏱ 等待超时，请重试');}
+      if(r.status==='success'){clearInterval(wizTimer);st.className='status-line show s-ok';st.textContent='✅ 登录成功，账号已加入账号池';loadDetail();}
+      else if(r.status==='timeout'){clearInterval(wizTimer);st.className='status-line show s-bad';st.textContent='⏱ 等待超时，请重试';}
     },2000);
   }
 }
-async function doPaste(pid){
-  const url=$('#pasteUrl').value.trim(); if(!url) return;
-  const r=await post('/api/login/paste',{providerId:pid,url});
-  const st=$('#wizStatus'); st.className='status-line show '+(r.status==='success'?'s-ok':'s-bad');
+async function dImport(){
+  const payload=$('#dPastePayload').value.trim(); if(!payload) return;
+  const st=$('#dLoginStatus');
+  st.className='status-line show s-wait'; st.textContent='导入中…';
+  const r=await post('/api/login/import',{providerId:curDetail,payload});
+  st.className='status-line show '+(r.status==='success'?'s-ok':'s-bad');
   st.textContent = r.status==='success'? '✅ 导入成功：'+(r.nickname||r.uid) : '❌ '+(r.error||'失败');
-  if(r.status==='success'){clearInterval(wizTimer);loadProviders();}
+  if(r.status==='success'){clearInterval(wizTimer);$('#dPastePayload').value='';loadDetail();}
 }
 async function smsSend(pid){
   const phone=$('#smsPhone').value.trim(); if(!phone) return;
   const r=await post('/api/sms/send',{providerId:pid,phone});
   $('#smsMsgid').value=r.msgid||''; $('#smsStep2').style.display='block';
-  const st=$('#wizStatus'); st.className='status-line show s-wait'; st.textContent='验证码已发送，请查收短信';
+  const st=$('#dLoginStatus'); st.className='status-line show s-wait'; st.textContent='验证码已发送，请查收短信';
 }
 async function smsDone(pid){
   const r=await post('/api/sms/complete',{providerId:pid,phone:$('#smsPhone').value.trim(),code:$('#smsCode').value.trim(),msgid:$('#smsMsgid').value});
-  const st=$('#wizStatus'); st.className='status-line show '+(r.status==='success'?'s-ok':'s-bad');
+  const st=$('#dLoginStatus'); st.className='status-line show '+(r.status==='success'?'s-ok':'s-bad');
   st.textContent = r.status==='success'? '✅ 登录成功：'+(r.nickname||r.uid) : '❌ '+(r.error||'失败');
-  if(r.status==='success') loadProviders();
+  if(r.status==='success') loadDetail();
+}
+async function checkinOne(p,u){
+  const r=await post('/api/checkin',{providerId:p,uid:u});
+  const x=(r.results||[])[0]||{}; alert((x.ok?'✅ ':'❌ ')+(x.message||''));
+  loadDetail();
+}
+async function refreshAllInDetail(){
+  const r=await post('/api/credits/all',{providerId:curDetail});
+  alert(`额度刷新完成：成功 ${r.okCount} / 共 ${r.total}`);
+  loadDetail();
+}
+async function dToggleEnabled(){
+  const cur=$('#dSwEnabled').classList.contains('on');
+  const r=await post('/api/provider/settings',{providerId:curDetail,enabled:!cur});
+  if(r.ok){ $('#dSwEnabled').classList.toggle('on', !cur);
+    const st=$('#dSetStatus'); st.className='status-line show s-ok';
+    st.textContent = !cur? '✅ 已启用（模型目录与路由恢复）' : '⏸ 已停用（不参与模型目录与路由，账号保留）';
+  }
+}
+async function dSaveDefault(){
+  const r=await post('/api/provider/settings',{providerId:curDetail,defaultModel:$('#dDefaultModel').value.trim()});
+  const st=$('#dSetStatus'); st.className='status-line show '+(r.ok?'s-ok':'s-bad'); st.textContent=r.ok?'✅ 默认模型已保存':'❌ 失败';
 }
 
 /* ---------- 模型 ---------- */
@@ -499,6 +601,12 @@ async function doTransferExport(){
   st.textContent = `已导出 ${n} 个账号到剪贴板（含明文凭证，注意保管；可直接粘进手机 App 导入）`;
 }
 
+async function exitApp(ev){
+  if(ev) ev.stopPropagation();
+  if(!confirm('确定退出网关程序吗？\n\n（更新版本流程：退出 → 重新构建 installDist → 双击桌面图标拉起新版）')) return;
+  await post('/api/exit',{});
+  alert('网关进程已退出。重新构建后双击桌面图标即可拉起新版。');
+}
 async function toggleAutostart(ev){
   if(ev) ev.stopPropagation();
   const cur = $('#swAutostart').classList.contains('on');

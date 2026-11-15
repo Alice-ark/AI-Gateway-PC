@@ -61,6 +61,13 @@ class AdminServer(
                 method == Method.POST && uri == "/api/sms/send" -> smsSend(body(session))
                 method == Method.POST && uri == "/api/sms/complete" -> smsComplete(body(session))
                 method == Method.POST && uri == "/api/settings" -> updateSettings(body(session))
+                uri.startsWith("/api/provider/") && uri.length > "/api/provider/".length -> providerDetail(uri.removePrefix("/api/provider/"))
+                method == Method.POST && uri == "/api/provider/settings" -> providerSettingsUpdate(body(session))
+                method == Method.POST && uri == "/api/login/import" -> loginImport(body(session))
+                method == Method.POST && uri == "/api/exit" -> {
+                    newFixedLengthResponse(Response.Status.OK, "application/json", """{"ok":true,"note":"网关进程即将退出"}""")
+                        .also { Thread { Thread.sleep(300); stopServer(); engine.stop(); kotlin.system.exitProcess(0) }.start() }
+                }
                 uri == "/api/service" -> serviceStatus()
                 method == Method.POST && uri == "/api/service" -> serviceToggle(body(session))
                 method == Method.POST && uri == "/api/checkin" -> checkin(body(session))
@@ -155,11 +162,12 @@ class AdminServer(
     /** 登录入口：按供应商的 AuthKind 分流为 poll（设备码）/ callback（浏览器跳回）/ sms（短信）。 */
     private fun loginStart(body: JsonObject): Response {
         val providerId = body.str("providerId") ?: return bad("缺 providerId")
+        val region = body.str("region") ?: ""
         val info = engine.providers().firstOrNull { it.id == providerId } ?: return bad("未知供应商: $providerId")
         return when (info.authKind.name) {
             "SMS_CODE" -> ok("""{"mode":"sms"}""")
             else -> {
-                val ticket = engine.beginBrowserLogin(providerId)
+                val ticket = engine.beginBrowserLogin(providerId, region)
                 if (ticket.pollState.isNotEmpty()) {
                     ok(
                         gson.toJson(
@@ -298,6 +306,44 @@ class AdminServer(
         val limit = params["limit"]?.firstOrNull()?.toIntOrNull() ?: 200
         val records = engine.callLogStore.list().takeLast(limit).reversed()
         return ok(gson.toJson(mapOf("records" to records, "totals" to engine.callLogStore.totalStats())))
+    }
+
+    /** 供应商详情：info + 设置（启停/默认模型/region option） + 该供应商的账号状态。 */
+    private fun providerDetail(id: String): Response {
+        val info = engine.providers().firstOrNull { it.id == id } ?: return bad("未知供应商: $id")
+        val settings = engine.providerSettings(id)
+        return ok(
+            gson.toJson(
+                mapOf(
+                    "info" to info,
+                    "settings" to mapOf(
+                        "enabled" to settings.enabled,
+                        "defaultModel" to settings.defaultModel,
+                        "region" to settings.option("region", ""),
+                    ),
+                    "accounts" to engine.pool.statuses(id),
+                ),
+            ),
+        )
+    }
+
+    private fun providerSettingsUpdate(body: JsonObject): Response {
+        val providerId = body.str("providerId") ?: return bad("缺 providerId")
+        val cur = engine.providerSettings(providerId)
+        val updated = cur.copy(
+            enabled = body.get("enabled")?.takeIf { it.isJsonPrimitive }?.asBoolean ?: cur.enabled,
+            defaultModel = body.str("defaultModel") ?: cur.defaultModel,
+            options = body.str("region")?.let { cur.options + ("region" to it) } ?: cur.options,
+        )
+        engine.updateProviderSettings(providerId, updated)
+        return ok("""{"ok":true}""")
+    }
+
+    /** 粘贴导入：回调链接（http 开头）或凭证 JSON，与 App「粘贴凭证 JSON 导入」同一入口。 */
+    private fun loginImport(body: JsonObject): Response {
+        val providerId = body.str("providerId") ?: return bad("缺 providerId")
+        val payload = body.str("payload") ?: return bad("缺 payload")
+        return outcomeJson(engine.importAccountJson(providerId, payload))
     }
 
     /** 安装根目录：jar 形态 = .../aigw（lib 的上一级）；开发形态退化为 classes 目录，仅供调试。 */
