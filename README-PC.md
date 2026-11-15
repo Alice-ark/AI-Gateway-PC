@@ -44,6 +44,21 @@ aigw.bat serve --port 8790 --open
 - **记录**：调用日志筛选（成功/失败/中断）
 - **我的**：接入设置、账号信封导入导出（与手机 App 互通）、开机自启动开关
 
+## 桌面快捷方式（推荐）
+
+`pc-packaging/launcher.ps1`：一键启动器——探测网关是否在线，没跑就静默拉起，然后自动打开管理台。
+安装后复制到 `aigw\` 目录（与 `bin\` 同级），并在桌面创建快捷方式：
+
+```powershell
+$ws = New-Object -ComObject WScript.Shell
+$lnk = $ws.CreateShortcut("$([Environment]::GetFolderPath('Desktop'))\AI Gateway PC.lnk")
+$lnk.TargetPath = "powershell.exe"
+$lnk.Arguments = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "<安装目录>\launcher.ps1"'
+$lnk.Save()
+```
+
+日常使用 = 桌面双击「AI Gateway PC」→ 管理台自动弹出，不需要记命令。
+
 ## 开机自启动（可选，默认关闭）
 
 管理台 → 我的 → 「保活与自启动」开关：
