@@ -61,13 +61,21 @@ private fun serve(engine: GatewayEngine, rest: List<String>) {
     option(rest, "--port")?.toIntOrNull()?.let { port ->
         engine.updateSettings(engine.settings().copy(port = port))
     }
+    val adminPort = option(rest, "--admin-port")?.toIntOrNull() ?: 8791
     engine.start()
     val settings: GatewaySettings = engine.settings()
     println("网关已启动：http://127.0.0.1:${settings.port}/v1")
     println("供应商数：${engine.providers().size}，账号数：${engine.pool.size()}，无 Key 调用：${settings.allowNoKey}")
+    val admin = AdminServer(engine, adminPort)
+    admin.startServer()
+    println("管理界面：http://127.0.0.1:$adminPort/（仅本机）")
+    if ("--open" in rest) {
+        runCatching { java.awt.Desktop.getDesktop().browse(java.net.URI("http://127.0.0.1:$adminPort/")) }
+    }
     println("按 Ctrl+C 退出。")
     val latch = CountDownLatch(1)
     Runtime.getRuntime().addShutdownHook(Thread {
+        admin.stopServer()
         engine.stop()
         latch.countDown()
     })

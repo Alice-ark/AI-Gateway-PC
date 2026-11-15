@@ -18,6 +18,9 @@ kotlin {
 
 dependencies {
     implementation(project(":core"))
+    // 管理台（AdminServer）直接用到 NanoHTTPD 与 Gson；core 里是 implementation 依赖，不会传递到这里
+    implementation("com.google.code.gson:gson:2.11.0")
+    implementation("org.nanohttpd:nanohttpd:2.3.1")
 }
 
 application {
