@@ -368,11 +368,11 @@ class AdminServer(
     private fun autostartToggle(body: JsonObject): Response {
         val enabled = body.get("enabled")?.takeIf { it.isJsonPrimitive }?.asBoolean ?: return bad("缺 enabled")
         if (enabled) {
-            val bat = installDir.resolve("bin").resolve("aigw.bat")
-            if (!java.nio.file.Files.exists(bat)) return bad("未找到 $bat，请在 installDist 的安装目录内运行")
+            val trayBat = installDir.resolve("aigw-tray.bat")
+            if (!java.nio.file.Files.exists(trayBat)) return bad("未找到 $trayBat，请在 installDist 的安装目录内运行")
             val script = "Set sh = CreateObject(\"WScript.Shell\")\r\n" +
                 "sh.CurrentDirectory = \"" + installDir + "\"\r\n" +
-                "sh.Run \"javaw -cp \"\"lib\\*\"\" dev.aigw.cli.MainKt serve\", 0, False\r\n"
+                "sh.Run \"\"" + trayBat + "\"\", 0, False\r\n"
             java.nio.file.Files.createDirectories(startupVbs.parent)
             java.nio.file.Files.writeString(startupVbs, script)
         } else {

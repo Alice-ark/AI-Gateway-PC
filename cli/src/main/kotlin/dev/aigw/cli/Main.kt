@@ -78,7 +78,8 @@ private fun serve(engine: GatewayEngine, rest: List<String>) {
     var trayIconRef: java.awt.TrayIcon? = null
     if (!java.awt.GraphicsEnvironment.isHeadless() && java.awt.SystemTray.isSupported() && "--no-tray" !in rest) {
         runCatching {
-            val img = javax.imageio.ImageIO.read(AdminServer::class.java.classLoader.getResourceAsStream("/icon.png"))
+            // Class.getResourceAsStream 才接受 "/icon.png" 前导斜杠；ClassLoader.getResourceAsStream 不接受（会返回 null）
+            val img = javax.imageio.ImageIO.read(AdminServer::class.java.getResourceAsStream("/icon.png"))
                 ?.getScaledInstance(32, 32, java.awt.Image.SCALE_SMOOTH)
             if (img != null) {
                 val tray = java.awt.SystemTray.getSystemTray()
