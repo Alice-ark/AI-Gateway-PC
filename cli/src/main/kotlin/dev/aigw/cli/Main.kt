@@ -93,48 +93,85 @@ private fun serve(engine: GatewayEngine, rest: List<String>) {
     }
 
     // 系统托盘：javaw 无窗口启动时，托盘图标是进程唯一的"存在感"（运行状态肉眼可见）。
-    // 失败可忽略（如 Linux 无桌面），网关照常运行。
+    // AWT 原生 PopupMenu 由 Windows GDI 绘制，默认菜单字体无中文字形（□□□），
+    // MenuItem.setFont 在 Win10/11 常被忽略；改用 Swing JPopupMenu（Java2D 绘制 +
+    // 字体回退）并显式指定微软雅黑，中文可正常显示。
     var trayIconRef: java.awt.TrayIcon? = null
     if (!java.awt.GraphicsEnvironment.isHeadless() && java.awt.SystemTray.isSupported() && "--no-tray" !in rest) {
         runCatching {
-            // Class.getResourceAsStream 才接受 "/icon.png" 前导斜杠；ClassLoader.getResourceAsStream 不接受（会返回 null）
+            // Class.getResourceAsStream 才接受 "/icon.png" 前导斜杠；ClassLoader 同名方法不接受（返回 null）
             val img = javax.imageio.ImageIO.read(AdminServer::class.java.getResourceAsStream("/icon.png"))
                 ?.getScaledInstance(32, 32, java.awt.Image.SCALE_SMOOTH)
             if (img != null) {
                 val tray = java.awt.SystemTray.getSystemTray()
-                val popup = java.awt.PopupMenu()
-                val trayIcon = java.awt.TrayIcon(img, "AI Gateway PC \u00b7 \u7f51\u5173 :${settings.port}", popup)
+                val trayIcon = java.awt.TrayIcon(img, "AI Gateway PC \u00b7 \u7f51\u5173 :${settings.port}")
                 trayIcon.isImageAutoSize = true
                 val openUi = Runnable {
                     runCatching { java.awt.Desktop.getDesktop().browse(java.net.URI("http://127.0.0.1:$adminPort/")) }
                 }
-                val miOpen = java.awt.MenuItem("\u6253\u5f00\u7ba1\u7406\u53f0")
-                miOpen.addActionListener { openUi.run() }
-                val miToggle = java.awt.MenuItem("\u505c\u6b62\u670d\u52a1")
-                miToggle.addActionListener {
-                    val running = engine.status().running
-                    runCatching { if (running) engine.stop() else engine.start() }
-                    miToggle.label = if (running) "\u542f\u52a8\u670d\u52a1" else "\u505c\u6b62\u670d\u52a1"
-                    trayIcon.toolTip = "AI Gateway PC \u00b7 \u7f51\u5173 ${if (running) "\u5df2\u505c\u6b62" else ":${engine.settings().port}"}"
+
+                // Swing 轻量弹出菜单需要 showing 的窗口作为 owner：屏幕外 1x1 无边框
+                // UTILITY 窗口，不进任务栏、不可见。
+                val invoker = javax.swing.JFrame().apply {
+                    isUndecorated = true
+                    setType(java.awt.Window.Type.UTILITY)
+                    setSize(1, 1)
+                    setLocation(-100, -100)
+                    isVisible = true
+                    runCatching { opacity = 0f }
                 }
-                val miExit = java.awt.MenuItem("\u9000\u51fa")
-                miExit.addActionListener {
+                // 深色菜单，与管理台配色一致
+                val bg = java.awt.Color(0x1d2130)
+                val fg = java.awt.Color(0xe8eaf2)
+                javax.swing.UIManager.put("PopupMenu.background", bg)
+                javax.swing.UIManager.put("MenuItem.background", bg)
+                javax.swing.UIManager.put("MenuItem.foreground", fg)
+                javax.swing.UIManager.put("MenuItem.selectionBackground", java.awt.Color(0x6c8cff))
+                javax.swing.UIManager.put("MenuItem.selectionForeground", java.awt.Color.WHITE)
+                javax.swing.UIManager.put("Separator.background", bg)
+                javax.swing.UIManager.put("Separator.foreground", java.awt.Color(0x2a2f42))
+                val menuFont = java.awt.Font("Microsoft YaHei", java.awt.Font.PLAIN, 13)
+                val popup = javax.swing.JPopupMenu().apply {
+                    border = javax.swing.BorderFactory.createLineBorder(java.awt.Color(0x2a2f42))
+                }
+                fun menuItem(text: String, action: () -> Unit): javax.swing.JMenuItem =
+                    javax.swing.JMenuItem(text).apply {
+                        font = menuFont
+                        addActionListener { action() }
+                        popup.add(this)
+                    }
+                menuItem("\u6253\u5f00\u7ba1\u7406\u53f0") { openUi.run() }
+                popup.addSeparator()
+                lateinit var miToggle: javax.swing.JMenuItem
+                miToggle = menuItem(if (engine.status().running) "\u505c\u6b62\u670d\u52a1" else "\u542f\u52a8\u670d\u52a1") {
+                    val wasRunning = engine.status().running
+                    runCatching { if (wasRunning) engine.stop() else engine.start() }
+                    miToggle.text = if (wasRunning) "\u542f\u52a8\u670d\u52a1" else "\u505c\u6b62\u670d\u52a1"
+                    trayIcon.toolTip = "AI Gateway PC \u00b7 \u7f51\u5173 ${if (wasRunning) "\u5df2\u505c\u6b62" else ":${engine.settings().port}"}"
+                }
+                popup.addSeparator()
+                menuItem("\u9000\u51fa") {
                     runCatching { tray.remove(trayIcon) }
                     admin.stopServer()
                     engine.stop()
                     kotlin.system.exitProcess(0)
                 }
-                popup.add(miOpen)
-                popup.add(miToggle)
-                popup.addSeparator()
-                popup.add(miExit)
-                // AWT 原生菜单默认 Dialog 字体缺中文字形（显示 □□□），显式指定雅黑
-                val menuFont = java.awt.Font("Microsoft YaHei", java.awt.Font.PLAIN, 12)
-                for (i in 0 until popup.itemCount) popup.getItem(i).font = menuFont
-                trayIcon.addActionListener { openUi.run() } // 双击托盘图标 = 打开管理台
+                fun maybeShowPopup(e: java.awt.event.MouseEvent) {
+                    if (!e.isPopupTrigger) return
+                    javax.swing.SwingUtilities.invokeLater {
+                        popup.show(invoker, e.xOnScreen - invoker.x, e.yOnScreen - invoker.y)
+                    }
+                }
+                trayIcon.addMouseListener(object : java.awt.event.MouseAdapter() {
+                    override fun mouseReleased(e: java.awt.event.MouseEvent) = maybeShowPopup(e)
+                    override fun mousePressed(e: java.awt.event.MouseEvent) = maybeShowPopup(e)
+                    override fun mouseClicked(e: java.awt.event.MouseEvent) {
+                        if (e.button == java.awt.event.MouseEvent.BUTTON1 && e.clickCount >= 2) openUi.run()
+                    }
+                })
                 tray.add(trayIcon)
                 trayIconRef = trayIcon
-                println("托盘图标已加载（右键：打开管理台 / 启停服务 / 退出；双击图标 = 打开管理台）")
+                println("托盘图标已加载（Swing 中文菜单：打开管理台 / 启停服务 / 退出；双击图标 = 打开管理台）")
             }
         }.onFailure { println("托盘初始化失败（忽略，网关照常运行）: ${it.message}") }
     }

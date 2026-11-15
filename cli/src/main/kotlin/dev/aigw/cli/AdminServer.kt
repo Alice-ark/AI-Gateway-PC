@@ -367,7 +367,7 @@ class AdminServer(
         startupLnk.resolveSibling("AI-Gateway-PC-autostart.vbs")
     }
 
-    /** 桌面快捷方式：作为自启动项的复制源（与桌面入口完全一致，零脚本）。 */
+    /** 桌面快捷方式：作为自启动项创建失败时的兜底复制源。 */
     private fun desktopLnk(): java.nio.file.Path? {
         val home = System.getProperty("user.home")
         return listOf(
@@ -381,18 +381,50 @@ class AdminServer(
     private fun autostartStatus(): Response =
         ok(gson.toJson(mapOf("enabled" to autostartEnabled(), "installDir" to installDir.toString())))
 
+    private fun runCmd(vararg cmd: String): Boolean = try {
+        ProcessBuilder(*cmd).redirectErrorStream(true).start().waitFor() == 0
+    } catch (e: Exception) { false }
+
+    /** 生成「静默」自启动项：参数不带 --open，开机只后台起网关，不弹管理台页面。 */
+    private fun createSilentStartupLnk(): Boolean {
+        val pwsh = java.nio.file.Paths.get(
+            System.getenv("WINDIR") ?: "C://Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe",
+        ).toString()
+        val javaw = java.nio.file.Paths.get(System.getProperty("java.home"), "bin", "javaw.exe")
+            .toAbsolutePath().toString().replace("'", "''")
+        val target = startupLnk.toString().replace("'", "''")
+        val wd = installDir.toString().replace("'", "''")
+        val icon = installDir.resolve("aigw-icon.ico").toString().replace("'", "''")
+        val d = "${'$'}"
+        val ps = """
+            ${d}ws=New-Object -ComObject WScript.Shell
+            ${d}s=${d}ws.CreateShortcut('$target')
+            ${d}s.TargetPath='$javaw'
+            ${d}s.Arguments='-cp lib\* dev.aigw.cli.MainKt serve --port 8790'
+            ${d}s.WorkingDirectory='$wd'
+            ${d}s.IconLocation='$icon,0'
+            ${d}s.Save()
+        """.trimIndent().lines().joinToString("; ")
+        return runCmd(pwsh, "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", ps)
+    }
+
     private fun autostartToggle(body: JsonObject): Response {
         val enabled = body.get("enabled")?.takeIf { it.isJsonPrimitive }?.asBoolean ?: return bad("缺 enabled")
         java.nio.file.Files.deleteIfExists(legacyStartupVbs)
         if (enabled) {
-            val src = desktopLnk()
-                ?: return bad("未找到桌面快捷方式「AI Gateway PC.lnk」，请先重建它再开启自启动")
             java.nio.file.Files.createDirectories(startupLnk.parent)
-            java.nio.file.Files.copy(src, startupLnk, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
-        } else {
-            java.nio.file.Files.deleteIfExists(startupLnk)
+            // 优先生成静默 lnk（开机不弹页面）；PowerShell 不可用时退回复制桌面 lnk
+            var silent = createSilentStartupLnk()
+            if (!java.nio.file.Files.exists(startupLnk)) {
+                val src = desktopLnk()
+                    ?: return bad("无法创建自启动快捷方式：请先重建桌面快捷方式「AI Gateway PC.lnk」")
+                java.nio.file.Files.copy(src, startupLnk, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+                silent = false
+            }
+            return ok(gson.toJson(mapOf("enabled" to true, "silent" to silent)))
         }
-        return ok(gson.toJson(mapOf("enabled" to autostartEnabled())))
+        java.nio.file.Files.deleteIfExists(startupLnk)
+        return ok(gson.toJson(mapOf("enabled" to false, "silent" to true)))
     }
 
     // ---------- 工具 ----------

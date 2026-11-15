@@ -106,9 +106,36 @@ body{padding-left:206px}
 .s-ok{background:rgba(62,207,142,.12);color:var(--ok)}
 .s-bad{background:rgba(255,92,92,.12);color:var(--bad)}
 .s-wait{background:rgba(108,140,255,.12);color:var(--accent)}
+/* ===== 轻量反馈：toast + 自定义确认框（替代浏览器原生 alert/confirm 全屏弹窗） ===== */
+#toasts{position:fixed;right:18px;bottom:18px;display:flex;flex-direction:column;gap:9px;z-index:9999;max-width:360px}
+.toast{background:var(--panel2);border:1px solid var(--border);border-left:3px solid var(--accent);color:var(--text);border-radius:10px;padding:11px 14px;box-shadow:0 8px 26px rgba(0,0,0,.45);font-size:13px;line-height:1.55;white-space:pre-wrap;animation:tin .22s ease-out;transition:opacity .3s,transform .3s}
+.toast.ok{border-left-color:var(--ok)}
+.toast.bad{border-left-color:var(--bad)}
+.toast.warn{border-left-color:var(--warn)}
+.toast.info{border-left-color:var(--accent)}
+.toast.out{opacity:0;transform:translateX(20px)}
+@keyframes tin{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:none}}
+#modalMask{position:fixed;inset:0;background:rgba(4,6,12,.62);backdrop-filter:blur(3px);display:none;align-items:center;justify-content:center;z-index:10000}
+#modalMask.show{display:flex}
+#modalBox{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:20px;max-width:430px;width:calc(100% - 40px);box-shadow:0 16px 48px rgba(0,0,0,.55)}
+#modalBox h3{font-size:16px;margin-bottom:8px}
+#modalBox p{color:var(--dim);font-size:13px;white-space:pre-wrap;line-height:1.65;margin-bottom:18px}
+#modalBox .row{display:flex;gap:10px;justify-content:flex-end}
 </style>
 </head>
 <body>
+<div id="toasts"></div>
+<div id="modalMask">
+  <div id="modalBox">
+    <h3 id="modalTitle">确认操作</h3>
+    <p id="modalText"></p>
+    <div class="row">
+      <button class="btn" id="modalCancel">取消</button>
+      <button class="btn primary" id="modalOk">确定</button>
+    </div>
+  </div>
+</div>
+
 <main>
 
 <!-- ========== 首页 ========== -->
@@ -270,9 +297,30 @@ body{padding-left:206px}
 <script>
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+/* ---------- 轻量反馈：toast（右下角自动消失）/ ask（页内确认框） ---------- */
+function toast(msg, type){
+  type = type || 'info';
+  const box = document.getElementById('toasts');
+  const el = document.createElement('div');
+  el.className = 'toast ' + type;
+  el.textContent = msg;
+  box.appendChild(el);
+  while(box.children.length > 4) box.removeChild(box.firstChild);
+  setTimeout(()=>{ el.classList.add('out'); setTimeout(()=>el.remove(), 320); }, type==='bad' ? 5200 : 3200);
+}
+function ask(msg, onOk){
+  const mask = document.getElementById('modalMask');
+  document.getElementById('modalText').textContent = msg;
+  mask.classList.add('show');
+  document.getElementById('modalOk').onclick = function(){ mask.classList.remove('show'); onOk(); };
+  document.getElementById('modalCancel').onclick = function(){ mask.classList.remove('show'); };
+  mask.onclick = function(e){ if(e.target === mask) mask.classList.remove('show'); };
+}
+document.addEventListener('keydown', e=>{ if(e.key==='Escape') document.getElementById('modalMask').classList.remove('show'); });
+
 async function api(path, opts){ const r = await fetch(path, opts); return r.json(); }
 const post = (p, b) => api(p, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(b||{})});
-const copyText = t => navigator.clipboard.writeText(t).then(()=>alert('已复制'));
+const copyText = t => navigator.clipboard.writeText(t).then(()=>toast('已复制','ok'));
 
 const PROV_META = {
   trae:       {icon:'🤖', color:'#4f7cff', desc:'网页登录导入，走 SOLO 免费通道（国内/国际）'},
@@ -329,8 +377,8 @@ async function toggleService(){
   const btn = $('#svcBtn'); btn.disabled = true;
   try {
     const r = await post('/api/service', {running: !svcRunning});
-    if(!r.ok && r.error) alert('操作失败：'+r.error);
-  } catch(e) { alert('请求失败：'+e); }
+    if(!r.ok && r.error) toast('操作失败：'+r.error,'bad');
+  } catch(e) { toast('请求失败：'+e,'bad'); }
   btn.disabled = false;
   loadHome();
 }
@@ -357,17 +405,17 @@ function drawTopology(provs, port){
 async function checkinAll(){
   const ov = await api('/api/overview');
   const targets = ov.providers.filter(p=>p.accountCount>0);
-  if(!targets.length) return alert('还没有账号');
+  if(!targets.length) return toast('还没有账号','warn');
   let out = [];
   for(const p of targets){
     const r = await post('/api/checkin',{providerId:p.id});
     r.results.forEach(x=>out.push(`${p.id}: ${x.message}`));
   }
-  alert('签到完成：\n'+out.join('\n'));
+  toast('签到完成：\n'+out.join('\n'),'ok');
 }
 async function refreshAllCredits(){
   const r = await post('/api/credits/all',{});
-  alert(`额度刷新完成：成功 ${r.okCount} / 共 ${r.total}`+(r.failed? `，失败 ${r.failed}`:''));
+  toast(`额度刷新完成：成功 ${r.okCount} / 共 ${r.total}`+(r.failed? `，失败 ${r.failed}`:''),'ok');
   loadHome();
 }
 
@@ -504,12 +552,12 @@ async function smsDone(pid){
 }
 async function checkinOne(p,u){
   const r=await post('/api/checkin',{providerId:p,uid:u});
-  const x=(r.results||[])[0]||{}; alert((x.ok?'✅ ':'❌ ')+(x.message||''));
+  const x=(r.results||[])[0]||{}; toast((x.ok?'✅ ':'❌ ')+(x.message||''), x.ok?'ok':'bad');
   loadDetail();
 }
 async function refreshAllInDetail(){
   const r=await post('/api/credits/all',{providerId:curDetail});
-  alert(`额度刷新完成：成功 ${r.okCount} / 共 ${r.total}`);
+  toast(`额度刷新完成：成功 ${r.okCount} / 共 ${r.total}`,'ok');
   loadDetail();
 }
 async function dToggleEnabled(){
@@ -605,16 +653,17 @@ async function doTransferExport(){
 
 async function exitApp(ev){
   if(ev) ev.stopPropagation();
-  if(!confirm('确定退出网关程序吗？\n\n（更新版本流程：退出 → 重新构建 installDist → 双击桌面图标拉起新版）')) return;
-  await post('/api/exit',{});
-  alert('网关进程已退出。重新构建后双击桌面图标即可拉起新版。');
+  ask('确定退出网关程序吗？\n\n更新版本流程：退出 → 重新构建 installDist → 双击桌面图标拉起新版', async ()=>{
+    await post('/api/exit',{});
+    toast('网关进程已退出。重新构建后双击桌面图标即可拉起新版。','ok');
+  });
 }
 async function toggleAutostart(ev){
   if(ev) ev.stopPropagation();
   const cur = $('#swAutostart').classList.contains('on');
   const r = await post('/api/autostart', {enabled: !cur});
   $('#swAutostart').classList.toggle('on', !!r.enabled);
-  alert(r.enabled? '已开启开机自启动\n\n（在启动文件夹写入 AI-Gateway-PC-autostart.vbs，开机时无窗口自动运行网关；可随时回本页关闭，或直接手删该文件）' : '已关闭开机自启动\n\n（启动文件夹里的脚本已删除）');
+  toast(r.enabled? '已开启开机自启动（静默）：开机只后台启动网关，不弹管理台页面' : '已关闭开机自启动（启动文件夹中的快捷方式已删除）', r.enabled?'ok':'info');
 }
 window.addEventListener('DOMContentLoaded', ()=>{
   api('/api/autostart').then(d=>$('#swAutostart').classList.toggle('on', !!d.enabled));
