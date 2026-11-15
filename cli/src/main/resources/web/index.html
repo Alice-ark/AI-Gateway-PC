@@ -504,7 +504,7 @@ async function toggleAutostart(ev){
   const cur = $('#swAutostart').classList.contains('on');
   const r = await post('/api/autostart', {enabled: !cur});
   $('#swAutostart').classList.toggle('on', !!r.enabled);
-  alert(r.enabled? '已开启开机自启动（写入当前用户注册表 Run 项，可随时回此页关闭）' : '已关闭开机自启动');
+  alert(r.enabled? '已开启开机自启动\n\n（在启动文件夹写入 AI-Gateway-PC-autostart.vbs，开机时无窗口自动运行网关；可随时回本页关闭，或直接手删该文件）' : '已关闭开机自启动\n\n（启动文件夹里的脚本已删除）');
 }
 window.addEventListener('DOMContentLoaded', ()=>{
   api('/api/autostart').then(d=>$('#swAutostart').classList.toggle('on', !!d.enabled));
