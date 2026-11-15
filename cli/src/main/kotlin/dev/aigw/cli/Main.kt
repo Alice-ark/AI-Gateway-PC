@@ -84,21 +84,21 @@ private fun serve(engine: GatewayEngine, rest: List<String>) {
             if (img != null) {
                 val tray = java.awt.SystemTray.getSystemTray()
                 val popup = java.awt.PopupMenu()
-                val trayIcon = java.awt.TrayIcon(img, "AI Gateway PC · 网关 :${settings.port}", popup)
+                val trayIcon = java.awt.TrayIcon(img, "AI Gateway PC \u00b7 \u7f51\u5173 :${settings.port}", popup)
                 trayIcon.isImageAutoSize = true
                 val openUi = Runnable {
                     runCatching { java.awt.Desktop.getDesktop().browse(java.net.URI("http://127.0.0.1:$adminPort/")) }
                 }
-                val miOpen = java.awt.MenuItem("打开管理台")
+                val miOpen = java.awt.MenuItem("\u6253\u5f00\u7ba1\u7406\u53f0")
                 miOpen.addActionListener { openUi.run() }
-                val miToggle = java.awt.MenuItem("停止服务")
+                val miToggle = java.awt.MenuItem("\u505c\u6b62\u670d\u52a1")
                 miToggle.addActionListener {
                     val running = engine.status().running
                     runCatching { if (running) engine.stop() else engine.start() }
-                    miToggle.label = if (running) "启动服务" else "停止服务"
-                    trayIcon.toolTip = "AI Gateway PC · 网关 ${if (running) "已停止" else ":${engine.settings().port}"}"
+                    miToggle.label = if (running) "\u542f\u52a8\u670d\u52a1" else "\u505c\u6b62\u670d\u52a1"
+                    trayIcon.toolTip = "AI Gateway PC \u00b7 \u7f51\u5173 ${if (running) "\u5df2\u505c\u6b62" else ":${engine.settings().port}"}"
                 }
-                val miExit = java.awt.MenuItem("退出")
+                val miExit = java.awt.MenuItem("\u9000\u51fa")
                 miExit.addActionListener {
                     runCatching { tray.remove(trayIcon) }
                     admin.stopServer()
