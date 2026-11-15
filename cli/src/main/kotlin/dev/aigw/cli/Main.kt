@@ -72,9 +72,54 @@ private fun serve(engine: GatewayEngine, rest: List<String>) {
     if ("--open" in rest) {
         runCatching { java.awt.Desktop.getDesktop().browse(java.net.URI("http://127.0.0.1:$adminPort/")) }
     }
+
+    // 系统托盘：javaw 无窗口启动时，托盘图标是进程唯一的"存在感"（运行状态肉眼可见）。
+    // 失败可忽略（如 Linux 无桌面），网关照常运行。
+    var trayIconRef: java.awt.TrayIcon? = null
+    if (!java.awt.GraphicsEnvironment.isHeadless() && java.awt.SystemTray.isSupported() && "--no-tray" !in rest) {
+        runCatching {
+            val img = javax.imageio.ImageIO.read(AdminServer::class.java.classLoader.getResourceAsStream("/icon.png"))
+                ?.getScaledInstance(32, 32, java.awt.Image.SCALE_SMOOTH)
+            if (img != null) {
+                val tray = java.awt.SystemTray.getSystemTray()
+                val popup = java.awt.PopupMenu()
+                val trayIcon = java.awt.TrayIcon(img, "AI Gateway PC · 网关 :${settings.port}", popup)
+                trayIcon.isImageAutoSize = true
+                val openUi = Runnable {
+                    runCatching { java.awt.Desktop.getDesktop().browse(java.net.URI("http://127.0.0.1:$adminPort/")) }
+                }
+                val miOpen = java.awt.MenuItem("打开管理台")
+                miOpen.addActionListener { openUi.run() }
+                val miToggle = java.awt.MenuItem("停止服务")
+                miToggle.addActionListener {
+                    val running = engine.status().running
+                    runCatching { if (running) engine.stop() else engine.start() }
+                    miToggle.label = if (running) "启动服务" else "停止服务"
+                    trayIcon.toolTip = "AI Gateway PC · 网关 ${if (running) "已停止" else ":${engine.settings().port}"}"
+                }
+                val miExit = java.awt.MenuItem("退出")
+                miExit.addActionListener {
+                    runCatching { tray.remove(trayIcon) }
+                    admin.stopServer()
+                    engine.stop()
+                    kotlin.system.exitProcess(0)
+                }
+                popup.add(miOpen)
+                popup.add(miToggle)
+                popup.addSeparator()
+                popup.add(miExit)
+                trayIcon.addActionListener { openUi.run() } // 双击托盘图标 = 打开管理台
+                tray.add(trayIcon)
+                trayIconRef = trayIcon
+                println("托盘图标已加载（右键：打开管理台 / 启停服务 / 退出；双击图标 = 打开管理台）")
+            }
+        }.onFailure { println("托盘初始化失败（忽略，网关照常运行）: ${it.message}") }
+    }
+
     println("按 Ctrl+C 退出。")
     val latch = CountDownLatch(1)
     Runtime.getRuntime().addShutdownHook(Thread {
+        trayIconRef?.let { t -> runCatching { java.awt.SystemTray.getSystemTray().remove(t) } }
         admin.stopServer()
         engine.stop()
         latch.countDown()

@@ -372,7 +372,7 @@ class AdminServer(
             if (!java.nio.file.Files.exists(bat)) return bad("未找到 $bat，请在 installDist 的安装目录内运行")
             val script = "Set sh = CreateObject(\"WScript.Shell\")\r\n" +
                 "sh.CurrentDirectory = \"" + installDir + "\"\r\n" +
-                "sh.Run \"\"\"" + bat + "\"\" serve\", 0, False\r\n"
+                "sh.Run \"javaw -cp \"\"lib\\*\"\" dev.aigw.cli.MainKt serve\", 0, False\r\n"
             java.nio.file.Files.createDirectories(startupVbs.parent)
             java.nio.file.Files.writeString(startupVbs, script)
         } else {
