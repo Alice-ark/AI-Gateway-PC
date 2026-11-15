@@ -354,31 +354,43 @@ class AdminServer(
         if (p.fileName.toString().endsWith(".jar")) p.parent.parent else p.parent
     }
 
-    /** 启动文件夹里的自启动脚本（纯文件操作：看得见、删得掉，不碰注册表）。 */
-    private val startupVbs: java.nio.file.Path by lazy {
+    /** 启动文件夹里的自启动快捷方式（纯 .lnk 文件：看得见、删得掉，不含任何脚本）。 */
+    private val startupLnk: java.nio.file.Path by lazy {
         java.nio.file.Paths.get(
             System.getenv("APPDATA"), "Microsoft", "Windows",
-            "Start Menu", "Programs", "Startup", "AI-Gateway-PC-autostart.vbs",
+            "Start Menu", "Programs", "Startup", "AI-Gateway-PC.lnk",
         )
     }
 
-    private fun autostartEnabled(): Boolean = java.nio.file.Files.exists(startupVbs)
+    /** 历史遗留的 VBS 自启动项（切换时顺手清理，VBS 易被杀软启发式误报）。 */
+    private val legacyStartupVbs: java.nio.file.Path by lazy {
+        startupLnk.resolveSibling("AI-Gateway-PC-autostart.vbs")
+    }
+
+    /** 桌面快捷方式：作为自启动项的复制源（与桌面入口完全一致，零脚本）。 */
+    private fun desktopLnk(): java.nio.file.Path? {
+        val home = System.getProperty("user.home")
+        return listOf(
+            java.nio.file.Paths.get(home, "Desktop", "AI Gateway PC.lnk"),
+            java.nio.file.Paths.get(home, "OneDrive", "Desktop", "AI Gateway PC.lnk"),
+        ).firstOrNull { java.nio.file.Files.exists(it) }
+    }
+
+    private fun autostartEnabled(): Boolean = java.nio.file.Files.exists(startupLnk)
 
     private fun autostartStatus(): Response =
         ok(gson.toJson(mapOf("enabled" to autostartEnabled(), "installDir" to installDir.toString())))
 
     private fun autostartToggle(body: JsonObject): Response {
         val enabled = body.get("enabled")?.takeIf { it.isJsonPrimitive }?.asBoolean ?: return bad("缺 enabled")
+        java.nio.file.Files.deleteIfExists(legacyStartupVbs)
         if (enabled) {
-            val trayBat = installDir.resolve("aigw-tray.bat")
-            if (!java.nio.file.Files.exists(trayBat)) return bad("未找到 $trayBat，请在 installDist 的安装目录内运行")
-            val script = "Set sh = CreateObject(\"WScript.Shell\")\r\n" +
-                "sh.CurrentDirectory = \"" + installDir + "\"\r\n" +
-                "sh.Run \"\"" + trayBat + "\"\", 0, False\r\n"
-            java.nio.file.Files.createDirectories(startupVbs.parent)
-            java.nio.file.Files.writeString(startupVbs, script)
+            val src = desktopLnk()
+                ?: return bad("未找到桌面快捷方式「AI Gateway PC.lnk」，请先重建它再开启自启动")
+            java.nio.file.Files.createDirectories(startupLnk.parent)
+            java.nio.file.Files.copy(src, startupLnk, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
         } else {
-            java.nio.file.Files.deleteIfExists(startupVbs)
+            java.nio.file.Files.deleteIfExists(startupLnk)
         }
         return ok(gson.toJson(mapOf("enabled" to autostartEnabled())))
     }

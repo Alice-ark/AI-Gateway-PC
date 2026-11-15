@@ -57,11 +57,30 @@ fun main(args: Array<String>) {
     }
 }
 
+/** 探测管理台端口是否已有实例监听（单实例保护用）。 */
+private fun adminPortAlive(port: Int): Boolean = try {
+    java.net.Socket().use { s ->
+        s.connect(java.net.InetSocketAddress("127.0.0.1", port), 300)
+        true
+    }
+} catch (e: Exception) {
+    false
+}
+
 private fun serve(engine: GatewayEngine, rest: List<String>) {
     option(rest, "--port")?.toIntOrNull()?.let { port ->
         engine.updateSettings(engine.settings().copy(port = port))
     }
     val adminPort = option(rest, "--admin-port")?.toIntOrNull() ?: 8791
+    // 桌面快捷方式改为 javaw 直启后，重复双击会拉起第二个进程。已有实例在跑时
+    // 只打开管理台并退出，避免端口冲突 / 重复托盘图标。
+    if (adminPortAlive(adminPort)) {
+        println("已有实例在运行（管理台 :$adminPort），仅打开管理台。")
+        if ("--open" in rest) {
+            runCatching { java.awt.Desktop.getDesktop().browse(java.net.URI("http://127.0.0.1:$adminPort/")) }
+        }
+        return
+    }
     engine.start()
     val settings: GatewaySettings = engine.settings()
     println("网关已启动：http://127.0.0.1:${settings.port}/v1")
