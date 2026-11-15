@@ -79,7 +79,9 @@ private fun serve(engine: GatewayEngine, rest: List<String>) {
         if ("--open" in rest) {
             runCatching { java.awt.Desktop.getDesktop().browse(java.net.URI("http://127.0.0.1:$adminPort/")) }
         }
-        return
+        // Desktop.browse() 会拉起 AWT 事件线程（非守护线程），只 return 时 JVM 不会
+        // 退出，每次重复双击都会残留一个无端口、无托盘的僵尸 javaw 进程；显式结束。
+        kotlin.system.exitProcess(0)
     }
     engine.start()
     val settings: GatewaySettings = engine.settings()
