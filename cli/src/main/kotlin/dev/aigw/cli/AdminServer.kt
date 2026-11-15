@@ -61,6 +61,13 @@ class AdminServer(
                 method == Method.POST && uri == "/api/sms/send" -> smsSend(body(session))
                 method == Method.POST && uri == "/api/sms/complete" -> smsComplete(body(session))
                 method == Method.POST && uri == "/api/settings" -> updateSettings(body(session))
+                uri == "/api/service" -> serviceStatus()
+                method == Method.POST && uri == "/api/service" -> serviceToggle(body(session))
+                method == Method.POST && uri == "/api/checkin" -> checkin(body(session))
+                method == Method.POST && uri == "/api/credits/all" -> creditsAll(body(session))
+                method == Method.POST && uri == "/api/transfer/import" -> transferImport(body(session))
+                uri == "/api/transfer/export" -> transferExport()
+                uri == "/api/records" -> recordsJson(session.parameters)
                 else -> newFixedLengthResponse(Response.Status.NOT_FOUND, "application/json", """{"error":"not found"}""")
             }
         } catch (e: Exception) {
@@ -114,7 +121,7 @@ class AdminServer(
         return gson.toJson(
             mapOf(
                 "port" to s.port, "apiKey" to s.apiKey.mask(), "allowNoKey" to s.allowNoKey,
-                "exposeLan" to s.exposeLan, "defaultProvider" to s.defaultProvider,
+                "exposeLan" to s.exposeLan, "defaultProvider" to s.defaultProvider, "onlyUsable" to s.onlyUsableModels,
             ),
         )
     }
@@ -231,9 +238,64 @@ class AdminServer(
             apiKey = body.str("apiKey")?.takeIf { !it.contains('*') } ?: s.apiKey,
             allowNoKey = body.get("allowNoKey")?.takeIf { it.isJsonPrimitive }?.asBoolean ?: s.allowNoKey,
             exposeLan = body.get("exposeLan")?.takeIf { it.isJsonPrimitive }?.asBoolean ?: s.exposeLan,
+            onlyUsableModels = body.get("onlyUsable")?.takeIf { it.isJsonPrimitive }?.asBoolean ?: s.onlyUsableModels,
         )
         engine.updateSettings(updated)
         return ok("""{"ok":true,"note":"端口改动需重启 aigw serve 生效"}""")
+    }
+
+    private fun serviceStatus(): Response = ok(gson.toJson(engine.status()))
+
+    private fun serviceToggle(body: JsonObject): Response {
+        val running = body.get("running")?.takeIf { it.isJsonPrimitive }?.asBoolean ?: return bad("缺 running")
+        val result = JsonObject()
+        try {
+            if (running && !engine.status().running) engine.start()
+            if (!running && engine.status().running) engine.stop()
+            result.addProperty("ok", true)
+        } catch (e: Exception) {
+            result.addProperty("ok", false)
+            result.addProperty("error", e.message ?: e.toString())
+        }
+        result.add("status", gson.toJsonTree(engine.status()))
+        return ok(result.toString())
+    }
+
+    private fun checkin(body: JsonObject): Response {
+        val providerId = body.str("providerId") ?: return bad("缺 providerId")
+        val uid = body.str("uid")
+        val targets = uid?.let { listOf(it) } ?: engine.accounts(providerId).map { it.uid }
+        val arr = com.google.gson.JsonArray()
+        for (t in targets) {
+            val r = engine.performAction(providerId, t, "checkin")
+            arr.add(JsonObject().apply {
+                addProperty("uid", t)
+                addProperty("ok", r.ok)
+                addProperty("message", r.message)
+            })
+        }
+        return ok("""{"results":$arr}""")
+    }
+
+    private fun creditsAll(body: JsonObject): Response {
+        val results = engine.refreshAllCredits(body.str("providerId"))
+        val okN = results.count { it.error.isEmpty() }
+        return ok("""{"total":${results.size},"okCount":$okN,"failed":${results.size - okN}}""")
+    }
+
+    private fun transferImport(body: JsonObject): Response {
+        val json = body.str("json") ?: return bad("缺 json")
+        val overwrite = body.get("overwrite")?.takeIf { it.isJsonPrimitive }?.asBoolean ?: false
+        val r = engine.importAccounts(json, overwrite)
+        return ok(gson.toJson(mapOf("added" to r.added, "updated" to r.updated, "skipped" to r.skipped, "unknown" to r.unknownProviders)))
+    }
+
+    private fun transferExport(): Response = ok(gson.toJson(mapOf("json" to engine.exportAccounts())))
+
+    private fun recordsJson(params: Map<String, List<String>>): Response {
+        val limit = params["limit"]?.firstOrNull()?.toIntOrNull() ?: 200
+        val records = engine.callLogStore.list().takeLast(limit).reversed()
+        return ok(gson.toJson(mapOf("records" to records, "totals" to engine.callLogStore.totalStats())))
     }
 
     // ---------- 工具 ----------
