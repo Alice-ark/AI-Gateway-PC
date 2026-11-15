@@ -3,6 +3,7 @@ package dev.aigw.cli
 import dev.aigw.core.gateway.GatewayEngine
 import dev.aigw.core.gateway.GatewaySettings
 import dev.aigw.core.gateway.LoginOutcome
+import dev.aigw.core.provider.DeviceAuthPoll
 import dev.aigw.core.store.FileKeyValueStore
 import java.io.File
 import java.util.concurrent.CountDownLatch
@@ -43,6 +44,7 @@ fun main(args: Array<String>) {
         "login" -> login(engine, rest)
         "browser-login" -> browserLogin(engine, rest)
         "sms" -> sms(engine, rest)
+        "transfer" -> transfer(engine, rest)
         "models" -> models(engine)
         "usage" -> usage(engine)
         "logs" -> logs(engine)
@@ -136,8 +138,24 @@ private fun browserLogin(engine: GatewayEngine, rest: List<String>) {
     val ticket = engine.beginBrowserLogin(providerId)
     println("请在浏览器打开：${ticket.loginUrl}")
     if (ticket.pollState.isNotEmpty()) {
-        println("这是轮询型登录（state=${ticket.pollState}），完成登录后由调用方轮询拿 token。")
-        return
+        // 轮询型登录（设备授权，如 WorkBuddy/CodeBuddy）：CLI 侧自行轮询直到授权完成
+        println("轮询型登录（state=${ticket.pollState}），等待你在浏览器完成授权（最长 5 分钟）…")
+        val deadline = System.currentTimeMillis() + 5 * 60 * 1000
+        while (System.currentTimeMillis() < deadline) {
+            when (val poll = engine.pollDeviceAuth(providerId, ticket.pollState, ticket.region)) {
+                is DeviceAuthPoll.Pending -> Thread.sleep(3_000)
+                is DeviceAuthPoll.Success -> {
+                    println("登录成功：${poll.account.nickname.ifEmpty { poll.account.uid }}（${poll.account.uid}），账号已加入账号池")
+                    return
+                }
+                is DeviceAuthPoll.Failed -> {
+                    System.err.println("登录失败：${poll.error}")
+                    kotlin.system.exitProcess(1)
+                }
+            }
+        }
+        System.err.println("等待授权超时（5 分钟），请重试")
+        kotlin.system.exitProcess(1)
     }
     println("已监听本地回调，等待浏览器跳回（最长 5 分钟）…")
     val latch = CountDownLatch(1)
@@ -170,6 +188,47 @@ private fun sms(engine: GatewayEngine, rest: List<String>) {
     }
     val msgid = option(rest, "--msgid") ?: error("请给 --msgid")
     report(engine.completeSmsLogin(providerId, phone, code, msgid))
+}
+
+/** 账号信封导入导出：与 App 端「账号导入导出」共用同一信封格式（AccountTransferEnvelope）。
+ *
+ * 用法：
+ *   aigw transfer export [--file FILE]        导出全部账号（含明文凭证）
+ *   aigw transfer import (--file FILE | <json>) [--overwrite]  导入信封（手机端导出的内容可直接导入）
+ */
+private fun transfer(engine: GatewayEngine, rest: List<String>) {
+    val action = positional(rest).firstOrNull() ?: "help"
+    val overwrite = "--overwrite" in rest
+    when (action) {
+        "export" -> {
+            val target = option(rest, "--file") ?: "aigw-accounts.json"
+            val json = engine.exportAccounts()
+            java.io.File(target).writeText(json)
+            println("已导出 ${engine.pool.accounts().size} 个账号（含明文凭证，勿外传）→ $target")
+        }
+        "import" -> {
+            val file = option(rest, "--file")
+            val json = when {
+                file != null -> java.io.File(file).readText()
+                else -> positional(rest).drop(1).firstOrNull()
+                    ?: error("请给 --file FILE 或直接粘贴信封 JSON")
+            }
+            val preview = engine.parseAccountTransfer(json)
+            println(
+                "信封含 ${preview.size} 个账号：" + preview.joinToString("、") {
+                    "${it.providerId}/${it.nickname.ifEmpty { it.uid.take(8) }}"
+                },
+            )
+            val result = engine.importAccounts(json, overwrite)
+            println(
+                "导入完成：新增 ${result.added.size}、覆盖 ${result.updated.size}、" +
+                    "跳过 ${result.skipped.size}（已存在，加 --overwrite 可覆盖）、" +
+                    "未知供应商 ${result.unknownProviders.size}",
+            )
+            for (u in result.unknownProviders) println("  未落池（本机没有该供应商）: $u")
+        }
+        else -> println("用法: aigw transfer export [--file FILE] | aigw transfer import (--file FILE | <json>) [--overwrite]")
+    }
 }
 
 private fun report(outcome: LoginOutcome) {
@@ -247,6 +306,7 @@ private fun printHelp() {
           login                   导入账号：回调链接或凭证 JSON（--provider ID）
           browser-login           用系统浏览器登录（--provider ID，打印登录链接并等待回调）
           sms                     短信登录：--provider ID --phone P [--msgid M --code C]
+          transfer                账号信封导入导出（与 App 端互通）：export [--file FILE] / import (--file FILE | <json>) [--overwrite]
           models                  列出全部供应商的模型（id 带 provider 前缀）
           usage                   调用统计
           logs                    请求日志
