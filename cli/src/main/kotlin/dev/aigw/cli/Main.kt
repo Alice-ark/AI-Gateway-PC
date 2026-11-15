@@ -164,23 +164,23 @@ private fun serve(engine: GatewayEngine, rest: List<String>) {
                         // （常见返回 0 或图标内相对坐标），getXOnScreen 更不可靠；
                         // 直接取鼠标当前屏幕位置最稳（StackOverflow 12667526 的标准 workaround）。
                         val pt = java.awt.MouseInfo.getPointerInfo()?.location ?: java.awt.Point(e.x, e.y)
-                        var x = pt.x
-                        var y = pt.y
                         val size = popup.preferredSize
                         val gdc = java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment()
                             .defaultScreenDevice.defaultConfiguration
                         val b = gdc.bounds
                         val ins = java.awt.Toolkit.getDefaultToolkit().getScreenInsets(gdc)
+                        val left = b.x + ins.left
+                        val top = b.y + ins.top
                         val right = b.x + b.width - ins.right
                         val bottom = b.y + b.height - ins.bottom
-                        if (x + size.width > right) x = right - size.width
-                        // 右下角托盘：菜单弹到鼠标上方，避免超出屏幕底部被挤到角落
-                        if (y + size.height > bottom) y = pt.y - size.height
-                        popup.show(
-                            invoker,
-                            x.coerceAtLeast(b.x + ins.left),
-                            y.coerceAtLeast(b.y + ins.top),
-                        )
+                        var x = pt.x
+                        // Windows 原生托盘菜单以任务栏为锚向上展开（菜单底边贴近
+                        // 图标/鼠标），而不是把鼠标点当左上角向右下铺开。
+                        var y = pt.y - size.height
+                        if (x + size.width > right) x = right - size.width   // 靠右边缘则向左翻
+                        if (y < top) y = pt.y                                 // 上方空间不足才退回下方
+                        if (y + size.height > bottom) y = bottom - size.height
+                        popup.show(invoker, x.coerceAtLeast(left), y.coerceAtLeast(top))
                     }
                 }
                 trayIcon.addMouseListener(object : java.awt.event.MouseAdapter() {
