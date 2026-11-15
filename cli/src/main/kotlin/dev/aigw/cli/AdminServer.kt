@@ -381,31 +381,26 @@ class AdminServer(
     private fun autostartStatus(): Response =
         ok(gson.toJson(mapOf("enabled" to autostartEnabled(), "installDir" to installDir.toString())))
 
-    private fun runCmd(vararg cmd: String): Boolean = try {
-        ProcessBuilder(*cmd).redirectErrorStream(true).start().waitFor() == 0
-    } catch (e: Exception) { false }
-
-    /** 生成「静默」自启动项：参数不带 --open，开机只后台起网关，不弹管理台页面。 */
+    /**
+     * 生成「静默」自启动项：复制桌面 .lnk，把命令行里的 "--open" 等长替换为 "--noop"。
+     * 纯 Java 字节操作，不调用 PowerShell、不写注册表、不生成脚本——避免安全软件
+     * 把「隐藏执行 PowerShell」判为敏感动作。等长替换保证 .lnk 的 StringData 长度
+     * 字段与后续结构完全不变；"--noop" 只是个被忽略的无关参数。
+     */
     private fun createSilentStartupLnk(): Boolean {
-        val pwsh = java.nio.file.Paths.get(
-            System.getenv("WINDIR") ?: "C://Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe",
-        ).toString()
-        val javaw = java.nio.file.Paths.get(System.getProperty("java.home"), "bin", "javaw.exe")
-            .toAbsolutePath().toString().replace("'", "''")
-        val target = startupLnk.toString().replace("'", "''")
-        val wd = installDir.toString().replace("'", "''")
-        val icon = installDir.resolve("aigw-icon.ico").toString().replace("'", "''")
-        val d = "${'$'}"
-        val ps = """
-            ${d}ws=New-Object -ComObject WScript.Shell
-            ${d}s=${d}ws.CreateShortcut('$target')
-            ${d}s.TargetPath='$javaw'
-            ${d}s.Arguments='-cp lib\* dev.aigw.cli.MainKt serve --port 8790'
-            ${d}s.WorkingDirectory='$wd'
-            ${d}s.IconLocation='$icon,0'
-            ${d}s.Save()
-        """.trimIndent().lines().joinToString("; ")
-        return runCmd(pwsh, "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", ps)
+        val src = desktopLnk() ?: return false
+        val bytes = java.nio.file.Files.readAllBytes(src)
+        val needle = "--open".toByteArray(Charsets.UTF_16LE)
+        val silent = "--noop".toByteArray(Charsets.UTF_16LE)
+        var pos = -1
+        for (i in 0..bytes.size - needle.size) {
+            if (needle.indices.all { bytes[i + it] == needle[it] }) { pos = i; break }
+        }
+        if (pos < 0) return false
+        silent.copyInto(bytes, pos)
+        java.nio.file.Files.createDirectories(startupLnk.parent)
+        java.nio.file.Files.write(startupLnk, bytes)
+        return true
     }
 
     private fun autostartToggle(body: JsonObject): Response {
@@ -413,7 +408,7 @@ class AdminServer(
         java.nio.file.Files.deleteIfExists(legacyStartupVbs)
         if (enabled) {
             java.nio.file.Files.createDirectories(startupLnk.parent)
-            // 优先生成静默 lnk（开机不弹页面）；PowerShell 不可用时退回复制桌面 lnk
+            // 优先生成静默 lnk（开机不弹页面）；桌面快捷方式缺少标记时退回复制
             var silent = createSilentStartupLnk()
             if (!java.nio.file.Files.exists(startupLnk)) {
                 val src = desktopLnk()

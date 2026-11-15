@@ -116,7 +116,8 @@ private fun serve(engine: GatewayEngine, rest: List<String>) {
                     isUndecorated = true
                     setType(java.awt.Window.Type.UTILITY)
                     setSize(1, 1)
-                    setLocation(-100, -100)
+                    // 与屏幕原点对齐：popup.show(invoker, x, y) 的 x/y 直接当屏幕坐标用
+                    setLocation(0, 0)
                     isVisible = true
                     runCatching { opacity = 0f }
                 }
@@ -159,7 +160,27 @@ private fun serve(engine: GatewayEngine, rest: List<String>) {
                 fun maybeShowPopup(e: java.awt.event.MouseEvent) {
                     if (!e.isPopupTrigger) return
                     javax.swing.SwingUtilities.invokeLater {
-                        popup.show(invoker, e.xOnScreen - invoker.x, e.yOnScreen - invoker.y)
+                        // TrayIcon 不是 Component，JDK 各实现里 MouseEvent.getX/getY 语义不一
+                        // （常见返回 0 或图标内相对坐标），getXOnScreen 更不可靠；
+                        // 直接取鼠标当前屏幕位置最稳（StackOverflow 12667526 的标准 workaround）。
+                        val pt = java.awt.MouseInfo.getPointerInfo()?.location ?: java.awt.Point(e.x, e.y)
+                        var x = pt.x
+                        var y = pt.y
+                        val size = popup.preferredSize
+                        val gdc = java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment()
+                            .defaultScreenDevice.defaultConfiguration
+                        val b = gdc.bounds
+                        val ins = java.awt.Toolkit.getDefaultToolkit().getScreenInsets(gdc)
+                        val right = b.x + b.width - ins.right
+                        val bottom = b.y + b.height - ins.bottom
+                        if (x + size.width > right) x = right - size.width
+                        // 右下角托盘：菜单弹到鼠标上方，避免超出屏幕底部被挤到角落
+                        if (y + size.height > bottom) y = pt.y - size.height
+                        popup.show(
+                            invoker,
+                            x.coerceAtLeast(b.x + ins.left),
+                            y.coerceAtLeast(b.y + ins.top),
+                        )
                     }
                 }
                 trayIcon.addMouseListener(object : java.awt.event.MouseAdapter() {
