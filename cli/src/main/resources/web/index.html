@@ -11,7 +11,7 @@
   --ok:#3ecf8e;--warn:#f5a623;--bad:#ff5c5c;--purple:#8f7bff;
 }
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:var(--bg);color:var(--text);font:14px/1.55 "Segoe UI","Microsoft YaHei",sans-serif;padding-bottom:86px}
+body{background:var(--bg);color:var(--text);font:14px/1.55 "Segoe UI","Microsoft YaHei",sans-serif}
 main{max-width:860px;margin:0 auto;padding:26px 22px 0}
 .page-head{margin-bottom:18px}
 .page-head h1{font-size:26px;font-weight:700}
@@ -90,12 +90,16 @@ main{max-width:860px;margin:0 auto;padding:26px 22px 0}
 input,select,textarea{background:var(--panel2);border:1px solid var(--border);border-radius:9px;color:var(--text);padding:9px 11px;font-size:13px;width:100%}
 textarea{resize:vertical;font-family:inherit}
 label{display:block;color:var(--dim);font-size:12px;margin:10px 0 5px}
-/* 底部导航 */
-#bottombar{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);display:flex;gap:4px;background:rgba(21,24,35,.92);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:26px;padding:6px;z-index:50}
-#bottombar button{background:none;border:none;color:var(--dim);font-size:12px;padding:9px 18px;border-radius:20px;cursor:pointer;display:flex;align-items:center;gap:6px}
-#bottombar button .ico{font-size:16px}
-#bottombar button.active{background:var(--gold);color:#151823;font-weight:700}
-#bottombar button:not(.active):hover{color:var(--text)}
+/* 左侧导航栏（PC 布局） */
+body{padding-left:206px}
+#sidebar{position:fixed;left:0;top:0;bottom:0;width:190px;background:var(--panel);border-right:1px solid var(--border);padding:20px 12px;display:flex;flex-direction:column;z-index:50}
+#sidebar h1{font-size:17px;padding:6px 10px 18px;font-weight:700}
+#sidebar .sub{color:var(--dim);font-size:11px;padding:0 10px 18px;margin-top:-16px}
+#sidebar button{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:none;border:none;color:var(--dim);padding:11px 13px;border-radius:9px;cursor:pointer;font-size:14px;margin-bottom:3px}
+#sidebar button .ico{font-size:17px}
+#sidebar button:hover{background:var(--panel2);color:var(--text)}
+#sidebar button.active{background:var(--panel2);color:var(--gold);font-weight:700}
+#sidebar .foot{margin-top:auto;color:var(--dim);font-size:11px;padding:10px;line-height:1.7}
 /* 状态条 */
 .status-line{margin-top:10px;padding:10px 12px;border-radius:9px;display:none;font-size:13px}
 .status-line.show{display:block}
@@ -204,6 +208,7 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 5px}
       </div>
       <div id="transferStatus" class="status-line"></div>
     </div>
+    <div class="set-row" onclick="toggleAutostart(event)"><div class="l"><b>保活与自启动 · AUTOSTART</b><div class="desc">开机自动启动网关（可选，默认关闭，随时可关）</div></div><div class="r"><span id="swAutostart" class="switch" onclick="toggleAutostart(event)"></span></div></div>
     <div class="set-row" onclick="togglePanel('panelExposure')"><div class="l"><b>模型开放名单 · EXPOSURE</b><div class="desc">只开放有可用账号的供应商的模型</div></div><div class="r">切换</div></div>
     <div class="set-panel" id="panelExposure">
       <div>只开放可用模型 <span id="swOnlyUsable2" class="switch" onclick="toggleOnlyUsable()"></span></div>
@@ -218,12 +223,15 @@ label{display:block;color:var(--dim);font-size:12px;margin:10px 0 5px}
 
 </main>
 
-<nav id="bottombar">
+<nav id="sidebar">
+  <h1>ai-gateway</h1>
+  <div class="sub">本地 OpenAI 兼容网关 · PC 版</div>
   <button data-tab="home" class="active" onclick="switchTab('home')"><span class="ico">🏠</span>首页</button>
-  <button data-tab="providers" onclick="switchTab('providers')"><span class="ico">👤</span>供应</button>
+  <button data-tab="providers" onclick="switchTab('providers')"><span class="ico">👤</span>供应商</button>
   <button data-tab="models" onclick="switchTab('models')"><span class="ico">🗂</span>模型</button>
   <button data-tab="records" onclick="switchTab('records')"><span class="ico">🕘</span>记录</button>
   <button data-tab="mine" onclick="switchTab('mine')"><span class="ico">⚙️</span>我的</button>
+  <div class="foot" id="navFoot"></div>
 </nav>
 
 <script>
@@ -244,7 +252,7 @@ const PROV_META = {
 const AUTH_LABEL = {DEVICE_CODE:'设备码登录', WEBVIEW_CALLBACK:'浏览器登录', OAUTH_LOOPBACK:'OAuth 登录', SMS_CODE:'短信登录', API_KEY:'API Key'};
 
 function switchTab(t){
-  document.querySelectorAll('#bottombar button').forEach(b=>b.classList.toggle('active', b.dataset.tab===t));
+  document.querySelectorAll('#sidebar button').forEach(b=>b.classList.toggle('active', b.dataset.tab===t));
   document.querySelectorAll('main section').forEach(x=>x.style.display='none');
   $('#tab-'+t).style.display='block';
   ({home:loadHome, providers:loadProviders, models:loadModels, records:()=>loadRecords(curFilter), mine:loadMine}[t]||(()=>{}))();
@@ -282,6 +290,7 @@ async function loadHome(){
     <div class="stat" style="background:none;border:none;padding:4px"><span>今日请求</span><b>${today.length}</b></div>
     <div class="stat" style="background:none;border:none;padding:4px"><span>今日 tokens</span><b>${todayTok.toLocaleString()}</b></div>`;
   $('#epHint').textContent = ':'+svc.port;
+  $('#navFoot').innerHTML = '网关 :'+svc.port+'<br>管理台 :'+location.port;
 }
 async function toggleService(){
   const btn = $('#svcBtn'); btn.disabled = true;
@@ -490,7 +499,17 @@ async function doTransferExport(){
   st.textContent = `已导出 ${n} 个账号到剪贴板（含明文凭证，注意保管；可直接粘进手机 App 导入）`;
 }
 
-window.addEventListener('DOMContentLoaded', ()=>{ loadHome(); setInterval(()=>{ if($('#tab-home').style.display!=='none') loadHome(); }, 10000); });
+async function toggleAutostart(ev){
+  if(ev) ev.stopPropagation();
+  const cur = $('#swAutostart').classList.contains('on');
+  const r = await post('/api/autostart', {enabled: !cur});
+  $('#swAutostart').classList.toggle('on', !!r.enabled);
+  alert(r.enabled? '已开启开机自启动（写入当前用户注册表 Run 项，可随时回此页关闭）' : '已关闭开机自启动');
+}
+window.addEventListener('DOMContentLoaded', ()=>{
+  api('/api/autostart').then(d=>$('#swAutostart').classList.toggle('on', !!d.enabled));
+  loadHome(); setInterval(()=>{ if($('#tab-home').style.display!=='none') loadHome(); }, 10000);
+});
 </script>
 </body>
 </html>

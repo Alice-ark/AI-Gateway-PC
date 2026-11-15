@@ -68,6 +68,8 @@ class AdminServer(
                 method == Method.POST && uri == "/api/transfer/import" -> transferImport(body(session))
                 uri == "/api/transfer/export" -> transferExport()
                 uri == "/api/records" -> recordsJson(session.parameters)
+                method == Method.POST && uri == "/api/autostart" -> autostartToggle(body(session))
+                uri == "/api/autostart" -> autostartStatus()
                 else -> newFixedLengthResponse(Response.Status.NOT_FOUND, "application/json", """{"error":"not found"}""")
             }
         } catch (e: Exception) {
@@ -296,6 +298,41 @@ class AdminServer(
         val limit = params["limit"]?.firstOrNull()?.toIntOrNull() ?: 200
         val records = engine.callLogStore.list().takeLast(limit).reversed()
         return ok(gson.toJson(mapOf("records" to records, "totals" to engine.callLogStore.totalStats())))
+    }
+
+    /** 安装根目录：jar 形态 = .../aigw（lib 的上一级）；开发形态退化为 classes 目录，仅供调试。 */
+    private val installDir: java.nio.file.Path by lazy {
+        val p = java.nio.file.Paths.get(AdminServer::class.java.protectionDomain.codeSource.location.toURI()).toAbsolutePath()
+        if (p.fileName.toString().endsWith(".jar")) p.parent.parent else p.parent
+    }
+
+    /** 启动文件夹里的自启动脚本（纯文件操作：看得见、删得掉，不碰注册表）。 */
+    private val startupVbs: java.nio.file.Path by lazy {
+        java.nio.file.Paths.get(
+            System.getenv("APPDATA"), "Microsoft", "Windows",
+            "Start Menu", "Programs", "Startup", "AI-Gateway-PC-autostart.vbs",
+        )
+    }
+
+    private fun autostartEnabled(): Boolean = java.nio.file.Files.exists(startupVbs)
+
+    private fun autostartStatus(): Response =
+        ok(gson.toJson(mapOf("enabled" to autostartEnabled(), "installDir" to installDir.toString())))
+
+    private fun autostartToggle(body: JsonObject): Response {
+        val enabled = body.get("enabled")?.takeIf { it.isJsonPrimitive }?.asBoolean ?: return bad("缺 enabled")
+        if (enabled) {
+            val bat = installDir.resolve("bin").resolve("aigw.bat")
+            if (!java.nio.file.Files.exists(bat)) return bad("未找到 $bat，请在 installDist 的安装目录内运行")
+            val script = "Set sh = CreateObject(\"WScript.Shell\")\r\n" +
+                "sh.CurrentDirectory = \"" + installDir + "\"\r\n" +
+                "sh.Run \"\"\"" + bat + "\"\" serve\", 0, False\r\n"
+            java.nio.file.Files.createDirectories(startupVbs.parent)
+            java.nio.file.Files.writeString(startupVbs, script)
+        } else {
+            java.nio.file.Files.deleteIfExists(startupVbs)
+        }
+        return ok(gson.toJson(mapOf("enabled" to autostartEnabled())))
     }
 
     // ---------- 工具 ----------
