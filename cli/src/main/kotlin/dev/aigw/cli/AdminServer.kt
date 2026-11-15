@@ -45,38 +45,40 @@ class AdminServer(
             when {
                 uri == "/" || uri == "/index.html" -> staticRes("web/index.html", "text/html; charset=utf-8")
                 uri.startsWith("/web/") -> staticRes(uri.removePrefix("/"), mimeOf(uri))
+                // ---------- POST 全部前置（when 顺序匹配，GET 分支绝不放在 POST 前面） ----------
+                method == Method.POST && uri == "/api/accounts/enabled" -> accountEnabled(body(session))
+                method == Method.POST && uri == "/api/accounts/remove" -> accountRemove(body(session))
+                method == Method.POST && uri == "/api/credits" -> refreshCredits(body(session))
+                method == Method.POST && uri == "/api/credits/all" -> creditsAll(body(session))
+                method == Method.POST && uri == "/api/login/start" -> loginStart(body(session))
+                method == Method.POST && uri == "/api/login/paste" -> loginPaste(body(session))
+                method == Method.POST && uri == "/api/login/import" -> loginImport(body(session))
+                method == Method.POST && uri == "/api/sms/send" -> smsSend(body(session))
+                method == Method.POST && uri == "/api/sms/complete" -> smsComplete(body(session))
+                method == Method.POST && uri == "/api/checkin" -> checkin(body(session))
+                method == Method.POST && uri == "/api/transfer/import" -> transferImport(body(session))
+                method == Method.POST && uri == "/api/provider/settings" -> providerSettingsUpdate(body(session))
+                method == Method.POST && uri == "/api/settings" -> updateSettings(body(session))
+                method == Method.POST && uri == "/api/service" -> serviceToggle(body(session))
+                method == Method.POST && uri == "/api/autostart" -> autostartToggle(body(session))
+                method == Method.POST && uri == "/api/exit" -> {
+                    newFixedLengthResponse(Response.Status.OK, "application/json", """{"ok":true,"note":"exit soon"}""")
+                        .also { Thread { Thread.sleep(300); stopServer(); engine.stop(); kotlin.system.exitProcess(0) }.start() }
+                }
+                // ---------- GET ----------
                 uri == "/api/overview" -> overview()
                 uri == "/api/providers" -> ok(providersJson())
                 uri == "/api/accounts" -> ok(gson.toJson(mapOf("accounts" to engine.pool.statuses())))
                 uri == "/api/models" -> modelsJson()
                 uri == "/api/usage" -> usageJson()
+                uri == "/api/records" -> recordsJson(session.parameters)
+                uri == "/api/transfer/export" -> transferExport()
                 uri == "/api/settings" -> ok(settingsJson())
-                method == Method.POST && uri == "/api/accounts/enabled" -> accountEnabled(body(session))
-                method == Method.POST && uri == "/api/accounts/remove" -> accountRemove(body(session))
-                method == Method.POST && uri == "/api/credits" -> refreshCredits(body(session))
-                method == Method.POST && uri == "/api/login/start" -> loginStart(body(session))
+                uri == "/api/service" -> serviceStatus()
+                uri == "/api/autostart" -> autostartStatus()
                 uri == "/api/login/poll" -> loginPoll(session.parameters)
                 uri == "/api/login/wait" -> loginWait(session.parameters)
-                method == Method.POST && uri == "/api/login/paste" -> loginPaste(body(session))
-                method == Method.POST && uri == "/api/sms/send" -> smsSend(body(session))
-                method == Method.POST && uri == "/api/sms/complete" -> smsComplete(body(session))
-                method == Method.POST && uri == "/api/settings" -> updateSettings(body(session))
                 uri.startsWith("/api/provider/") && uri.length > "/api/provider/".length -> providerDetail(uri.removePrefix("/api/provider/"))
-                method == Method.POST && uri == "/api/provider/settings" -> providerSettingsUpdate(body(session))
-                method == Method.POST && uri == "/api/login/import" -> loginImport(body(session))
-                method == Method.POST && uri == "/api/exit" -> {
-                    newFixedLengthResponse(Response.Status.OK, "application/json", """{"ok":true,"note":"网关进程即将退出"}""")
-                        .also { Thread { Thread.sleep(300); stopServer(); engine.stop(); kotlin.system.exitProcess(0) }.start() }
-                }
-                uri == "/api/service" -> serviceStatus()
-                method == Method.POST && uri == "/api/service" -> serviceToggle(body(session))
-                method == Method.POST && uri == "/api/checkin" -> checkin(body(session))
-                method == Method.POST && uri == "/api/credits/all" -> creditsAll(body(session))
-                method == Method.POST && uri == "/api/transfer/import" -> transferImport(body(session))
-                uri == "/api/transfer/export" -> transferExport()
-                uri == "/api/records" -> recordsJson(session.parameters)
-                method == Method.POST && uri == "/api/autostart" -> autostartToggle(body(session))
-                uri == "/api/autostart" -> autostartStatus()
                 else -> newFixedLengthResponse(Response.Status.NOT_FOUND, "application/json", """{"error":"not found"}""")
             }
         } catch (e: Exception) {

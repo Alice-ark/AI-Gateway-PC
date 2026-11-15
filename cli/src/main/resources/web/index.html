@@ -327,9 +327,11 @@ async function loadHome(){
 }
 async function toggleService(){
   const btn = $('#svcBtn'); btn.disabled = true;
-  const r = await post('/api/service', {running: !svcRunning});
+  try {
+    const r = await post('/api/service', {running: !svcRunning});
+    if(!r.ok && r.error) alert('操作失败：'+r.error);
+  } catch(e) { alert('请求失败：'+e); }
   btn.disabled = false;
-  if(!r.ok && r.error) alert('操作失败：'+r.error);
   loadHome();
 }
 function drawTopology(provs, port){

@@ -109,6 +109,9 @@ private fun serve(engine: GatewayEngine, rest: List<String>) {
                 popup.add(miToggle)
                 popup.addSeparator()
                 popup.add(miExit)
+                // AWT 原生菜单默认 Dialog 字体缺中文字形（显示 □□□），显式指定雅黑
+                val menuFont = java.awt.Font("Microsoft YaHei", java.awt.Font.PLAIN, 12)
+                for (i in 0 until popup.itemCount) popup.getItem(i).font = menuFont
                 trayIcon.addActionListener { openUi.run() } // 双击托盘图标 = 打开管理台
                 tray.add(trayIcon)
                 trayIconRef = trayIcon
